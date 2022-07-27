@@ -1,92 +1,84 @@
 import {
   ChainId,
-  useClaimedNFTSupply,
   useContractMetadata,
   useNetwork,
-  useNFTDrop,
-  useUnclaimedNFTSupply,
   useActiveClaimCondition,
-  useClaimNFT,
-  useWalletConnect,
-  useCoinbaseWallet,
-} from '@thirdweb-dev/react';
-import { useNetworkMismatch } from '@thirdweb-dev/react';
-import { useAddress, useMetamask } from '@thirdweb-dev/react';
-import { formatUnits, parseUnits } from 'ethers/lib/utils';
-import type { NextPage } from 'next';
-import { useState } from 'react';
-import styles from '../styles/Theme.module.css';
+  useEditionDrop,
+  useNFT,
+  ThirdwebNftMedia,
+} from "@thirdweb-dev/react";
+import { useNetworkMismatch } from "@thirdweb-dev/react";
+import { useAddress, useMetamask } from "@thirdweb-dev/react";
+import { BigNumber } from "ethers";
+import type { NextPage } from "next";
+import { useState } from "react";
+import styles from "../styles/Theme.module.css";
 
-// Put Your NFT Drop Contract address from the dashboard here
-const myNftDropContractAddress = '0x9a3325f7c677a7B77517F2F148Cfa399ef0C185F';
+// Put Your Edition Drop Contract address from the dashboard here
+const myEditionDropContractAddress =
+  "0x9a3325f7c677a7B77517F2F148Cfa399ef0C185F";
 
 const Home: NextPage = () => {
-  const nftDrop = useNFTDrop(myNftDropContractAddress);
+  const editionDrop = useEditionDrop(myEditionDropContractAddress);
   const address = useAddress();
   const connectWithMetamask = useMetamask();
-  const connectWithWalletConnect = useWalletConnect();
-  const connectWithCoinbaseWallet = useCoinbaseWallet();
   const isOnWrongNetwork = useNetworkMismatch();
-  const claimNFT = useClaimNFT(nftDrop);
   const [, switchNetwork] = useNetwork();
 
-  // The amount the user claims
-  const [quantity, setQuantity] = useState(1); // default to 1
+  // The amount the user claims, updates when they type a value into the input field.
+  const [quantity, setQuantity] = useState<number>(1); // default to 1
+  const [claiming, setClaiming] = useState<boolean>(false);
 
   // Load contract metadata
   const { data: contractMetadata } = useContractMetadata(
-    myNftDropContractAddress,
+    myEditionDropContractAddress
   );
 
-  // Load claimed supply and unclaimed supply
-  const { data: unclaimedSupply } = useUnclaimedNFTSupply(nftDrop);
-  const { data: claimedSupply } = useClaimedNFTSupply(nftDrop);
+  const { data: nftMetadata } = useNFT(editionDrop, 0);
 
   // Load the active claim condition
-  const { data: activeClaimCondition } = useActiveClaimCondition(nftDrop);
-
-  // Check if there's NFTs left on the active claim phase
-  const isNotReady =
-    activeClaimCondition &&
-    parseInt(activeClaimCondition?.availableSupply) === 0;
-
-  // Check if there's any NFTs left
-  const isSoldOut = unclaimedSupply?.toNumber() === 0;
-
-  // Check price
-  const price = parseUnits(
-    activeClaimCondition?.currencyMetadata.displayValue || '0',
-    activeClaimCondition?.currencyMetadata.decimals,
+  const { data: activeClaimCondition } = useActiveClaimCondition(
+    editionDrop,
+    BigNumber.from(0)
   );
 
-  // Multiply depending on quantity
-  const priceToMint = price.mul(quantity);
+  console.log({
+    contractMetadata,
+    activeClaimCondition,
+  });
 
   // Loading state while we fetch the metadata
-  if (!nftDrop || !contractMetadata) {
+  if (!editionDrop || !contractMetadata) {
     return <div className={styles.container}>Loading...</div>;
   }
 
   // Function to mint/claim an NFT
-  const mint = async () => {
+  async function mint() {
+    // Make sure the user has their wallet connected.
+    if (!address) {
+      connectWithMetamask();
+      return;
+    }
+
+    // Make sure the user is on the correct network (same network as your NFT Drop is).
     if (isOnWrongNetwork) {
       switchNetwork && switchNetwork(ChainId.Rinkeby);
       return;
     }
 
-    claimNFT.mutate(
-      { to: address as string, quantity },
-      {
-        onSuccess: () => {
-          alert(`Successfully minted NFT${quantity > 1 ? 's' : ''}!`);
-        },
-        onError: (err: any) => {
-          console.error(err);
-          alert(err?.message || 'Something went wrong');
-        },
-      },
-    );
-  };
+    setClaiming(true);
+
+    try {
+      const minted = await editionDrop?.claim(0, quantity);
+      console.log(minted);
+      alert(`Successfully minted NFT${quantity > 1 ? "s" : ""}!`);
+    } catch (error: any) {
+      console.error(error);
+      alert((error?.message as string) || "Something went wrong");
+    } finally {
+      setClaiming(false);
+    }
+  }
 
   return (
     <div className={styles.container}>
@@ -100,10 +92,10 @@ const Home: NextPage = () => {
 
         <div className={styles.imageSide}>
           {/* Image Preview of NFTs */}
-          <img
+          <ThirdwebNftMedia
+            // @ts-ignore
+            metadata={nftMetadata?.metadata}
             className={styles.image}
-            src={contractMetadata?.image}
-            alt={`${contractMetadata?.name} preview image`}
           />
 
           {/* Amount claimed so far */}
@@ -112,15 +104,12 @@ const Home: NextPage = () => {
               <p>Total Minted</p>
             </div>
             <div className={styles.mintAreaRight}>
-              {claimedSupply && unclaimedSupply ? (
+              {activeClaimCondition ? (
                 <p>
                   {/* Claimed supply so far */}
-                  <b>{claimedSupply?.toNumber()}</b>
-                  {' / '}
-                  {
-                    // Add unclaimed and claimed supply to get the total supply
-                    claimedSupply?.toNumber() + unclaimedSupply?.toNumber()
-                  }
+                  <b>{activeClaimCondition.currentMintSupply}</b>
+                  {" / "}
+                  {activeClaimCondition.maxQuantity}
                 </p>
               ) : (
                 // Show loading state if we're still loading the supply
@@ -131,94 +120,52 @@ const Home: NextPage = () => {
 
           {/* Show claim button or connect wallet button */}
           {address ? (
-            // Sold out or show the claim button
-            isSoldOut ? (
-              <div>
-                <h2>Sold Out</h2>
-              </div>
-            ) : isNotReady ? (
-              <div>
-                <h2>Not ready to be minted yet</h2>
-              </div>
-            ) : (
-              <>
-                <p>Quantity</p>
-                <div className={styles.quantityContainer}>
-                  <button
-                    className={`${styles.quantityControlButton}`}
-                    onClick={() => setQuantity(quantity - 1)}
-                    disabled={quantity <= 1}
-                  >
-                    -
-                  </button>
+            <>
+              <p>Quantity</p>
+              <div className={styles.quantityContainer}>
+                <button
+                  className={`${styles.quantityControlButton}`}
+                  onClick={() => setQuantity(quantity - 1)}
+                  disabled={quantity <= 1}
+                >
+                  -
+                </button>
 
-                  <h4>{quantity}</h4>
-
-                  <button
-                    className={`${styles.quantityControlButton}`}
-                    onClick={() => setQuantity(quantity + 1)}
-                    disabled={
-                      quantity >=
-                      parseInt(
-                        activeClaimCondition?.quantityLimitPerTransaction ||
-                          '0',
-                      )
-                    }
-                  >
-                    +
-                  </button>
-                </div>
+                <h4>{quantity}</h4>
 
                 <button
-                  className={`${styles.mainButton} ${styles.spacerTop} ${styles.spacerBottom}`}
-                  onClick={mint}
-                  disabled={claimNFT.isLoading}
+                  className={`${styles.quantityControlButton}`}
+                  onClick={() => setQuantity(quantity + 1)}
+                  disabled={
+                    quantity >=
+                    parseInt(
+                      activeClaimCondition?.quantityLimitPerTransaction || "0"
+                    )
+                  }
                 >
-                  {claimNFT.isLoading
-                    ? 'Minting...'
-                    : `Mint${quantity > 1 ? ` ${quantity}` : ''}${
-                        activeClaimCondition?.price.eq(0)
-                          ? ' (Free)'
-                          : activeClaimCondition?.currencyMetadata.displayValue
-                          ? ` (${formatUnits(
-                              priceToMint,
-                              activeClaimCondition.currencyMetadata.decimals,
-                            )} ${
-                              activeClaimCondition?.currencyMetadata.symbol
-                            })`
-                          : ''
-                      }`}
+                  +
                 </button>
-              </>
-            )
+              </div>
+
+              <button
+                className={`${styles.mainButton} ${styles.spacerTop} ${styles.spacerBottom}`}
+                onClick={mint}
+                disabled={claiming}
+              >
+                {claiming ? "Minting..." : "Mint"}
+              </button>
+            </>
           ) : (
-            <div className={styles.buttons}>
-              <button
-                className={styles.mainButton}
-                onClick={connectWithMetamask}
-              >
-                Connect MetaMask
-              </button>
-              <button
-                className={styles.mainButton}
-                onClick={connectWithWalletConnect}
-              >
-                Connect with Wallet Connect
-              </button>
-              <button
-                className={styles.mainButton}
-                onClick={connectWithCoinbaseWallet}
-              >
-                Connect with Coinbase Wallet
-              </button>
-            </div>
+            <button className={styles.mainButton} onClick={connectWithMetamask}>
+              Connect Wallet
+            </button>
           )}
         </div>
       </div>
-      {/* Powered by thirdweb */}{' '}
+      {/* Powered by thirdweb */}{" "}
       <img
-        src="/logo.png"
-        alt="thirdweb Logo"
+        src={`/logo.png`}
+        alt="Thirdweb Logo"
         width={135}
         className={styles.buttonGapTop}
       />
